@@ -19503,7 +19503,9 @@ void Controller::layerInst_setSampleLoaded(uint8_t layerNum_) {
             // inherits that same guarantee, so 4x keeps the property while quadrupling read
             // throughput.
             const uint32_t rawArraySize = 24576;
-            static uint8_t rawArray[rawArraySize];
+            // 32-byte aligned so sector-aligned reads stay on the fast SD DMA path (sd_diskio.c
+            // falls back to a per-sector scratch copy for buffers that are not word aligned).
+            static uint8_t rawArray[rawArraySize] __attribute__((aligned(32)));
 
             // Determine Format Coefficients
             uint32_t sRate = layer.wavLoadedData.fmt_chunk.sampleRate;
