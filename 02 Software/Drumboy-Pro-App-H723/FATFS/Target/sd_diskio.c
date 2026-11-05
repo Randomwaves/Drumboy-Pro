@@ -68,7 +68,19 @@
 * transfer data
 */
 /* USER CODE BEGIN enableScratchBuffer */
-/* #define ENABLE_SCRATCH_BUFFER */
+/*
+ * Drumboy: the H7 SDMMC IDMA ignores the low 2 bits of the destination address, so a
+ * multi-sector f_read() into a non-word-aligned buffer (e.g. a WAV whose data chunk starts at
+ * byte 110 because of a LIST chunk) lands 2 bytes early and corrupts the audio. Route
+ * unaligned transfers through a word-aligned scratch sector instead.
+ * D-cache is disabled, so word alignment is sufficient (32-byte only matters for cache maintenance).
+ */
+#define ENABLE_SCRATCH_BUFFER
+#if (ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
+#define SD_DMA_ALIGN_MASK 0x1FU
+#else
+#define SD_DMA_ALIGN_MASK 0x03U
+#endif
 /* USER CODE END enableScratchBuffer */
 
 /* Private variables ---------------------------------------------------------*/
@@ -207,7 +219,7 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
   }
 
 #if defined(ENABLE_SCRATCH_BUFFER)
-  if (!((uint32_t)buff & 0x1F))
+  if (!((uint32_t)buff & SD_DMA_ALIGN_MASK))
   {
 #endif
     if(BSP_SD_ReadBlocks_DMA((uint32_t*)buff,
@@ -271,6 +283,12 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
           }
           ReadStatus = 0;
 
+          /* Drumboy: wait until the card is back in transfer state before the next command */
+          timeout = HAL_GetTick();
+          while ((BSP_SD_GetCardState() != SD_TRANSFER_OK) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+          {
+          }
+
 #if (ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
           /*
           *
@@ -328,7 +346,7 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
   }
 
 #if defined(ENABLE_SCRATCH_BUFFER)
-  if (!((uint32_t)buff & 0x1F))
+  if (!((uint32_t)buff & SD_DMA_ALIGN_MASK))
   {
 #endif
 #if (ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
@@ -402,6 +420,16 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
             break;
           }
 
+          /* Drumboy: wait for the card to finish programming before the next sector */
+          timeout = HAL_GetTick();
+          while ((BSP_SD_GetCardState() != SD_TRANSFER_OK) && ((HAL_GetTick() - timeout) < SD_TIMEOUT))
+          {
+          }
+          if (BSP_SD_GetCardState() != SD_TRANSFER_OK)
+          {
+            ret = MSD_ERROR;
+            break;
+          }
         }
         else
         {
